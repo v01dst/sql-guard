@@ -27,6 +27,9 @@ func analyzeFile(m Migration, src string, opts Options, out *[]Finding) {
 	// ---- NOT NULL column without DEFAULT ----
 	checkNotNullWithoutDefault(toks, m, add)
 
+	// ---- CREATE INDEX without CONCURRENTLY ----
+	checkCreateIndexConcurrently(toks, m, add)
+
 	// ---- transaction-wrapping heuristic ----
 	checkTransaction(toks, m, add)
 }
@@ -143,6 +146,35 @@ func checkNotNullWithoutDefault(toks []token, m Migration, add func(Severity, st
 		if hasAdd && hasColumn && hasNotNull && !hasDefault {
 			add(Warning, "not-null-no-default", "ALTER TABLE adds a NOT NULL column without a DEFAULT; fails on tables with existing rows", toks[i].line,
 				"add a DEFAULT value, or add the column as nullable and backfill in a separate step")
+		}
+	}
+}
+
+// checkCreateIndexConcurrently flags CREATE INDEX without CONCURRENTLY, which
+// locks the table and blocks writes on PostgreSQL.
+func checkCreateIndexConcurrently(toks []token, m Migration, add func(Severity, string, string, int, ...string)) {
+	for i := 0; i < len(toks); i++ {
+		if toks[i].text != "CREATE" {
+			continue
+		}
+		if i+1 >= len(toks) || toks[i+1].text != "INDEX" {
+			continue
+		}
+		// find statement end
+		end := i
+		for end < len(toks) && toks[end].text != ";" {
+			end++
+		}
+		hasConcurrently := false
+		for j := i; j < end; j++ {
+			if toks[j].text == "CONCURRENTLY" {
+				hasConcurrently = true
+				break
+			}
+		}
+		if !hasConcurrently {
+			add(Warning, "create-index-no-concurrently", "CREATE INDEX without CONCURRENTLY locks the table and blocks writes", toks[i].line,
+				"add CONCURRENTLY to avoid locking the table in production (PostgreSQL)")
 		}
 	}
 }
