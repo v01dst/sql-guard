@@ -24,6 +24,9 @@ func analyzeFile(m Migration, src string, opts Options, out *[]Finding) {
 	// ---- DELETE / UPDATE without WHERE ----
 	checkMissingWhere(toks, m, add)
 
+	// ---- NOT NULL column without DEFAULT ----
+	checkNotNullWithoutDefault(toks, m, add)
+
 	// ---- transaction-wrapping heuristic ----
 	checkTransaction(toks, m, add)
 }
@@ -103,6 +106,43 @@ func checkMissingWhere(toks []token, m Migration, add func(Severity, string, str
 			}
 			add(sev, "missing-where", t+" statement has no WHERE clause and will affect every row", toks[i].line,
 				"add a WHERE clause, or an explicit guard, unless a full-table operation is intentional")
+		}
+	}
+}
+
+// checkNotNullWithoutDefault flags ALTER TABLE ... ADD COLUMN ... NOT NULL
+// without a DEFAULT, which fails on tables that already have rows.
+func checkNotNullWithoutDefault(toks []token, m Migration, add func(Severity, string, string, int, ...string)) {
+	for i := 0; i < len(toks); i++ {
+		if toks[i].text != "ALTER" {
+			continue
+		}
+		// find statement end
+		end := i
+		for end < len(toks) && toks[end].text != ";" {
+			end++
+		}
+		hasAdd := false
+		hasColumn := false
+		hasNotNull := false
+		hasDefault := false
+		for j := i; j < end; j++ {
+			if toks[j].text == "ADD" {
+				hasAdd = true
+			}
+			if toks[j].text == "COLUMN" {
+				hasColumn = true
+			}
+			if toks[j].text == "NOT" && j+1 < end && toks[j+1].text == "NULL" {
+				hasNotNull = true
+			}
+			if toks[j].text == "DEFAULT" {
+				hasDefault = true
+			}
+		}
+		if hasAdd && hasColumn && hasNotNull && !hasDefault {
+			add(Warning, "not-null-no-default", "ALTER TABLE adds a NOT NULL column without a DEFAULT; fails on tables with existing rows", toks[i].line,
+				"add a DEFAULT value, or add the column as nullable and backfill in a separate step")
 		}
 	}
 }
