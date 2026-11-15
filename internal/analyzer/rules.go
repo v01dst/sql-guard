@@ -33,6 +33,9 @@ func analyzeFile(m Migration, src string, opts Options, out *[]Finding) {
 	// ---- CREATE TABLE without PRIMARY KEY ----
 	checkCreateTablePrimaryKey(toks, m, add)
 
+	// ---- GRANT / REVOKE privilege changes ----
+	checkPrivilegeChanges(toks, m, add)
+
 	// ---- transaction-wrapping heuristic ----
 	checkTransaction(toks, m, add)
 }
@@ -207,6 +210,18 @@ func checkCreateTablePrimaryKey(toks []token, m Migration, add func(Severity, st
 		if !hasPrimaryKey {
 			add(Info, "create-table-no-primary-key", "CREATE TABLE without a PRIMARY KEY", toks[i].line,
 				"add a PRIMARY KEY to ensure row uniqueness and efficient lookups")
+		}
+	}
+}
+
+// checkPrivilegeChanges flags GRANT and REVOKE statements, which change
+// database permissions and should be reviewed carefully.
+func checkPrivilegeChanges(toks []token, m Migration, add func(Severity, string, string, int, ...string)) {
+	for i := 0; i < len(toks); i++ {
+		t := toks[i].text
+		if t == "GRANT" || t == "REVOKE" {
+			add(Warning, "privilege-change", t+" changes database permissions; review carefully", toks[i].line,
+				"ensure privilege changes are intentional and follow least-privilege principles")
 		}
 	}
 }
