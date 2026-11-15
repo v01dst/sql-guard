@@ -36,6 +36,9 @@ func analyzeFile(m Migration, src string, opts Options, out *[]Finding) {
 	// ---- GRANT / REVOKE privilege changes ----
 	checkPrivilegeChanges(toks, m, add)
 
+	// ---- ALTER TABLE RENAME ----
+	checkAlterRename(toks, m, add)
+
 	// ---- transaction-wrapping heuristic ----
 	checkTransaction(toks, m, add)
 }
@@ -222,6 +225,32 @@ func checkPrivilegeChanges(toks []token, m Migration, add func(Severity, string,
 		if t == "GRANT" || t == "REVOKE" {
 			add(Warning, "privilege-change", t+" changes database permissions; review carefully", toks[i].line,
 				"ensure privilege changes are intentional and follow least-privilege principles")
+		}
+	}
+}
+
+// checkAlterRename flags ALTER TABLE ... RENAME statements, which can break
+// references to the old name in application code and ORM mappings.
+func checkAlterRename(toks []token, m Migration, add func(Severity, string, string, int, ...string)) {
+	for i := 0; i < len(toks); i++ {
+		if toks[i].text != "ALTER" {
+			continue
+		}
+		// find statement end
+		end := i
+		for end < len(toks) && toks[end].text != ";" {
+			end++
+		}
+		hasRename := false
+		for j := i; j < end; j++ {
+			if toks[j].text == "RENAME" {
+				hasRename = true
+				break
+			}
+		}
+		if hasRename {
+			add(Warning, "alter-rename", "ALTER TABLE RENAME may break references to the old name", toks[i].line,
+				"update all referencing code, views, and ORM mappings in the same change")
 		}
 	}
 }
