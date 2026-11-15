@@ -45,6 +45,12 @@ func checkDestructive(toks []token, m Migration, add func(Severity, string, stri
 					msg = "DROP " + next + " may affect query performance or integrity"
 					hint = []string{"recreate the index/constraint in the same migration if needed"}
 				}
+				if next == "TABLE" {
+					if i+2 < len(toks) && toks[i+2].text != "IF" {
+						add(Warning, "drop-table-no-if-exists", "DROP TABLE without IF EXISTS fails if the table is already absent", toks[i].line,
+							"add IF EXISTS to make the migration idempotent and safe to re-run")
+					}
+				}
 				add(sev, "destructive-drop", msg, toks[i].line, hint...)
 			}
 		case "TRUNCATE":
