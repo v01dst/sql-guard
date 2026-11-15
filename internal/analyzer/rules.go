@@ -30,6 +30,9 @@ func analyzeFile(m Migration, src string, opts Options, out *[]Finding) {
 	// ---- CREATE INDEX without CONCURRENTLY ----
 	checkCreateIndexConcurrently(toks, m, add)
 
+	// ---- CREATE TABLE without PRIMARY KEY ----
+	checkCreateTablePrimaryKey(toks, m, add)
+
 	// ---- transaction-wrapping heuristic ----
 	checkTransaction(toks, m, add)
 }
@@ -175,6 +178,35 @@ func checkCreateIndexConcurrently(toks []token, m Migration, add func(Severity, 
 		if !hasConcurrently {
 			add(Warning, "create-index-no-concurrently", "CREATE INDEX without CONCURRENTLY locks the table and blocks writes", toks[i].line,
 				"add CONCURRENTLY to avoid locking the table in production (PostgreSQL)")
+		}
+	}
+}
+
+// checkCreateTablePrimaryKey flags CREATE TABLE without a PRIMARY KEY, which
+// is a common best-practice violation.
+func checkCreateTablePrimaryKey(toks []token, m Migration, add func(Severity, string, string, int, ...string)) {
+	for i := 0; i < len(toks); i++ {
+		if toks[i].text != "CREATE" {
+			continue
+		}
+		if i+1 >= len(toks) || toks[i+1].text != "TABLE" {
+			continue
+		}
+		// find statement end
+		end := i
+		for end < len(toks) && toks[end].text != ";" {
+			end++
+		}
+		hasPrimaryKey := false
+		for j := i; j < end; j++ {
+			if toks[j].text == "PRIMARY" && j+1 < end && toks[j+1].text == "KEY" {
+				hasPrimaryKey = true
+				break
+			}
+		}
+		if !hasPrimaryKey {
+			add(Info, "create-table-no-primary-key", "CREATE TABLE without a PRIMARY KEY", toks[i].line,
+				"add a PRIMARY KEY to ensure row uniqueness and efficient lookups")
 		}
 	}
 }
