@@ -33,6 +33,9 @@ func analyzeFile(m Migration, src string, opts Options, out *[]Finding) {
 	// ---- CREATE TABLE without PRIMARY KEY ----
 	checkCreateTablePrimaryKey(toks, m, add)
 
+	// ---- CREATE TABLE without IF NOT EXISTS ----
+	checkCreateTableIfNotExists(toks, m, add)
+
 	// ---- GRANT / REVOKE privilege changes ----
 	checkPrivilegeChanges(toks, m, add)
 
@@ -251,6 +254,35 @@ func checkAlterRename(toks []token, m Migration, add func(Severity, string, stri
 		if hasRename {
 			add(Warning, "alter-rename", "ALTER TABLE RENAME may break references to the old name", toks[i].line,
 				"update all referencing code, views, and ORM mappings in the same change")
+		}
+	}
+}
+
+// checkCreateTableIfNotExists flags CREATE TABLE without IF NOT EXISTS, which
+// fails if the table already exists.
+func checkCreateTableIfNotExists(toks []token, m Migration, add func(Severity, string, string, int, ...string)) {
+	for i := 0; i < len(toks); i++ {
+		if toks[i].text != "CREATE" {
+			continue
+		}
+		if i+1 >= len(toks) || toks[i+1].text != "TABLE" {
+			continue
+		}
+		// find statement end
+		end := i
+		for end < len(toks) && toks[end].text != ";" {
+			end++
+		}
+		hasIfNotExists := false
+		for j := i + 2; j < end; j++ {
+			if toks[j].text == "IF" && j+2 < end && toks[j+1].text == "NOT" && toks[j+2].text == "EXISTS" {
+				hasIfNotExists = true
+				break
+			}
+		}
+		if !hasIfNotExists {
+			add(Info, "create-table-no-if-not-exists", "CREATE TABLE without IF NOT EXISTS fails if the table already exists", toks[i].line,
+				"add IF NOT EXISTS to make the migration idempotent")
 		}
 	}
 }
